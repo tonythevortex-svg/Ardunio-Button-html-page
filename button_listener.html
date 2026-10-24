@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arduino Button</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #e9eee7;
+      color: #17251d;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      transition: background-color 180ms ease, color 180ms ease;
+    }
+
+    main {
+      display: grid;
+      justify-items: center;
+      gap: 1.25rem;
+      text-align: center;
+    }
+
+    #state {
+      font-size: clamp(10rem, 35vw, 22rem);
+      line-height: 0.8;
+      font-weight: 800;
+    }
+
+    .button-tile {
+      display: grid;
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 1.15em;
+      padding: 0.08em;
+      place-items: center;
+      overflow-wrap: anywhere;
+      border-radius: 3px;
+      background: #34443a;
+      color: #fff;
+    }
+
+    .button-tile.button-1 { background: #175f49; }
+    .button-tile.button-2 { background: #176bb5; }
+    .button-tile.button-3 { background: #a64b32; }
+    .button-tile.button-4 { background: #806000; }
+    .button-tile.button-5 { background: #874265; }
+
+    #state.sequence-flash .button-tile {
+      animation: sequence-flash 700ms steps(2, end) 3;
+    }
+
+    @keyframes sequence-flash {
+      50% { filter: brightness(1.8); }
+    }
+
+    #status {
+      min-height: 1.5em;
+      font-size: 1rem;
+    }
+
+    button {
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      padding: 0.8rem 1.2rem;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    body.button-1 {
+      background: #175f49;
+      color: #f3f6e9;
+    }
+
+    body.button-2 {
+      background: #176bb5;
+      color: #f3f6e9;
+    }
+
+    body.button-3 {
+      background: #a64b32;
+      color: #fff7ef;
+    }
+
+    body.button-4 {
+      background: #806000;
+      color: #fff9df;
+    }
+
+    body.button-5 {
+      background: #874265;
+      color: #fff1f7;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <!-- Change this text to set the initial large on-screen display. -->
+    <div id="state" aria-live="polite">0</div>
+    <!-- Change this text to set the initial connection/status message. -->
+    <div id="status">Not connected</div>
+    <button id="connect" type="button">Connect Arduino</button>
+  </main>
+
+  <script>
+    const stateDisplay = document.querySelector('#state');
+    const statusDisplay = document.querySelector('#status');
+    const connectButton = document.querySelector('#connect');
+    // Change these labels to choose the text shown for each button.
+    const buttonLabels = { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5' };
+    const buttonFrequencies = { '1': 262, '2': 330, '3': 392, '4': 494, '5': 587 };
+    let audioContext;
+
+    function playButtonSound(value) {
+      const frequency = buttonFrequencies[value];
+      if (!audioContext || !frequency) return;
+
+      const oscillator = audioContext.createOscillator();
+      const volume = audioContext.createGain();
+      const now = audioContext.currentTime;
+      oscillator.frequency.value = frequency;
+      oscillator.type = 'sine';
+      volume.gain.setValueAtTime(0.0001, now);
+      volume.gain.exponentialRampToValueAtTime(0.12, now + 0.015);
+      volume.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+      oscillator.connect(volume);
+      volume.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.22);
+    }
+
+    function showButtonState(value) {
+      stateDisplay.textContent = buttonLabels[value] ?? value;
+      for (let buttonNumber = 1; buttonNumber <= 5; buttonNumber++) {
+        document.body.classList.toggle(`button-${buttonNumber}`, value === String(buttonNumber));
+      }
+      if (value !== '0') playButtonSound(value);
+    }
+
+    connectButton.addEventListener('click', async () => {
+      if (!('serial' in navigator)) {
+        statusDisplay.textContent = 'Web Serial is unavailable. Open this page in Chrome or Edge.';
+        return;
+      }
+
+      connectButton.disabled = true;
+      try {
+        audioContext ??= new AudioContext();
+        audioContext.resume().catch(() => {});
+        const port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 9600 });
+        statusDisplay.textContent = 'Connected. Press a button.';
+
+        const decoder = new TextDecoderStream();
+        port.readable.pipeTo(decoder.writable).catch(() => {});
+        const reader = decoder.readable.getReader();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            const reading = line.trim();
+            if (/^[0-5]$/.test(reading)) showButtonState(reading);
+          }
+        }
+      } catch (error) {
+        statusDisplay.textContent = error.name === 'NotFoundError'
+          ? 'No port selected.'
+          : `Connection error: ${error.message}`;
+      } finally {
+        connectButton.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
